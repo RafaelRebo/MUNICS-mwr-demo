@@ -2,10 +2,13 @@ import os
 import streamlit as st
 import pandas as pd
 from openai import OpenAI
+from dotenv import load_dotenv
 
 from pipeline.static_pe import analyze_pe
 from pipeline.llm_mitre import generate_mitre_profile
 from pipeline.yara_validator import generate_and_validate_yara
+
+load_dotenv()
 
 st.set_page_config(page_title="AI Malware Triage & YARA Pipeline", layout="wide")
 
@@ -66,7 +69,13 @@ with st.sidebar:
             st.markdown(badge("OLLAMA SERVER OFFLINE", "err"), unsafe_allow_html=True)
         model = st.selectbox("Local Model:", local_models)
     else:
-        api_key = st.text_input("Groq API Key (gsk_...):", type="password")
+        env_key = os.getenv("GROQ_API_KEY", "")
+        if env_key:
+            api_key = env_key
+            st.markdown(badge("GROQ API KEY LOADED (.ENV)", "ok"), unsafe_allow_html=True)
+        else:
+            api_key = st.text_input("Groq API Key (gsk_...):", type="password")
+
         cloud_models = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "llama-3.1-8b-instant"]
         if api_key:
             try:
