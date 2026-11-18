@@ -10,7 +10,7 @@ from pipeline.yara_validator import generate_and_validate_yara
 
 load_dotenv()
 
-st.set_page_config(page_title="AI Malware Triage & YARA Pipeline", layout="wide")
+st.set_page_config(page_title="AI Malware Analysis & YARA Pipeline", layout="wide")
 
 # --- CUSTOM CSS FOR CLEAN TECHNICAL BADGES & UI ---
 st.markdown("""
@@ -43,15 +43,15 @@ def badge(text: str, kind: str = "info") -> str:
     return f'<span class="badge badge-{kind}">{text}</span>'
 
 
-st.title("Automated Malware Triage & YARA Synthesis Pipeline")
-st.caption("Static PE Feature Extraction (IAT, Section Entropy, Strings)  |  MITRE ATT&CK Threat Profiling  |  Zero-FP YARA v4 Synthesis")
+st.title("AI Malware Analysis & YARA Pipeline")
+st.caption("Static PE Extraction (IAT, Section Entropy, Strings)  |  MITRE ATT&CK Threat Profiling  |  YARA v4 rule creation & validation")
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("Inference Configuration")
+    st.header("Model Configuration")
     provider = st.radio(
-        "Execution Provider:",
-        ["Local (Ollama)", "Cloud (Groq API)"],
+        "Provider:",
+        ["Local (Ollama)", "Groq"],
         index=0
     )
 
@@ -74,7 +74,7 @@ with st.sidebar:
             api_key = env_key
             st.markdown(badge("GROQ API KEY LOADED (.ENV)", "ok"), unsafe_allow_html=True)
         else:
-            api_key = st.text_input("Groq API Key (gsk_...):", type="password")
+            api_key = st.text_input("Groq API Key:", type="password")
 
         cloud_models = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "llama-3.1-8b-instant"]
         if api_key:
@@ -88,10 +88,10 @@ with st.sidebar:
                     cloud_models = sorted(active, key=lambda x: (0 if "120b" in x or "70b" in x or "qwen" in x else 1, x))
             except Exception:
                 pass
-        model = st.selectbox("Cloud Model:", cloud_models)
+        model = st.selectbox("Groq Model:", cloud_models)
 
     st.divider()
-    st.subheader("Validation Corpus")
+    st.subheader("Validation Sets")
     legit_dir = st.text_input("Benign Binaries Directory:", value="legitimate_files")
     samples_dir = st.text_input("Malware Samples Directory:", value="samples")
     if os.path.exists(legit_dir):
@@ -125,7 +125,7 @@ if uploaded_file:
     if pe_data["packing_reasons"]:
         st.warning("Packing / Entropy Anomalies: " + " | ".join(pe_data["packing_reasons"]))
 
-    with st.expander("Inspect Technical Artifacts (Hashes, Sections, IAT/EAT & Strings)", expanded=True):
+    with st.expander("Inspect File Artifacts (Hashes, Sections, IAT/EAT & Strings)", expanded=True):
         st.code(
             f"MD5:    {pe_data['md5']}\n"
             f"SHA256: {pe_data['sha256']}\n"
@@ -135,7 +135,7 @@ if uploaded_file:
 
         col_a, col_b = st.columns(2)
         with col_a:
-            st.subheader("PE Sections & Shannon Entropy")
+            st.subheader("PE Sections & Entropy")
             df_sec = pd.DataFrame(pe_data["sections"])
             st.dataframe(df_sec, use_container_width=True, hide_index=True)
             st.bar_chart(df_sec.set_index("Section")["Entropy"], height=160)
@@ -149,8 +149,8 @@ if uploaded_file:
                 st.write("**Exported Symbols:**", ", ".join(pe_data["exports"]))
 
         with col_b:
-            st.subheader("Filtered High-Signal Strings (-n 6)")
-            st.text_area("Extracted Indicators:", "\n".join(pe_data["interesting_strings"]), height=260)
+            st.subheader("Filtered Relevant Strings (-n 6)")
+            st.text_area("Primary Indicators:", "\n".join(pe_data["interesting_strings"]), height=260)
             st.subheader("Additional Strings")
             st.text_area("Secondary Strings:", "\n".join(pe_data["other_strings"]), height=160)
 
@@ -159,11 +159,11 @@ if uploaded_file:
     # ================= PHASE 2: MITRE ATT&CK =================
     st.markdown('<div class="phase-header"><h3>Phase 2: Threat Profiling & MITRE ATT&CK Mapping</h3></div>', unsafe_allow_html=True)
 
-    if st.button("Run Phase 2: Classify & Map MITRE ATT&CK", type="primary"):
-        if provider == "Cloud (Groq API)" and not api_key:
+    if st.button("Phase 2: Classify & Map MITRE ATT&CK", type="primary"):
+        if provider == "Groq" and not api_key:
             st.warning("Please enter your Groq API Key in the sidebar.")
             st.stop()
-        with st.spinner(f"Analyzing static artifacts with {model}..."):
+        with st.spinner(f"Analyzing artifacts with {model}..."):
             st.session_state["profile"] = generate_mitre_profile(provider, api_key, model, pe_data)
 
     if "profile" in st.session_state:
@@ -171,7 +171,7 @@ if uploaded_file:
         m1, m2, m3 = st.columns(3)
         m1.metric("Threat Classification", p.get("malware_type", "N/A"))
         m2.metric("Risk Level", p.get("risk_level", "N/A"))
-        m3.metric("Inference Latency", f"{p.get('elapsed_time', 0)} s")
+        m3.metric("Elapsed Time", f"{p.get('elapsed_time', 0)} s")
         st.info(p.get("diagnosis", ""))
         if p.get("mitre_attack"):
             st.dataframe(pd.DataFrame(p["mitre_attack"]), use_container_width=True, hide_index=True)
@@ -179,22 +179,22 @@ if uploaded_file:
         st.divider()
 
         # ================= PHASE 3: YARA SYNTHESIS & AUDIT =================
-        st.markdown('<div class="phase-header"><h3>Phase 3: YARA v4 Rule Synthesis & Zero-FP Validation</h3></div>', unsafe_allow_html=True)
+        st.markdown('<div class="phase-header"><h3>Phase 3: YARA v4 Rule Creation & Validation</h3></div>', unsafe_allow_html=True)
 
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
             run_single = st.button(f"Generate & Validate YARA Rule ({model})", type="primary", use_container_width=True)
         with btn_col2:
-            run_bench = st.button("Benchmark Local Models: Untrained Base (3B) vs. Fine-Tuned (3B)", use_container_width=True)
+            run_bench = st.button("Untrained Base vs. Fine-Tuned", use_container_width=True)
 
         if run_single:
-            with st.spinner(f"Synthesizing YARA rule with {model} and auditing against benign corpus..."):
+            with st.spinner(f"Creating YARA rule with {model} and auditing against benign files..."):
                 st.session_state["yara"] = generate_and_validate_yara(
                     provider, api_key, model, p, pe_data, exe_bytes, legit_dir, samples_dir
                 )
 
         if run_bench:
-            with st.spinner("Running head-to-head local evaluation on RTX GPU (Base 3B vs. Fine-Tuned 3B)..."):
+            with st.spinner("Running head-to-head local evaluation..."):
                 res_base = generate_and_validate_yara(
                     "Local (Ollama)", "", "qwen2.5-coder:3b", p, pe_data, exe_bytes, legit_dir, samples_dir
                 )
@@ -211,9 +211,9 @@ if uploaded_file:
             st.code(y["yara_rule"], language="yara")
             st.download_button("Download .yar File", y["yara_rule"], file_name=f"{y['rule_name']}.yar")
         with cy2:
-            st.subheader("Detection Engineering Rationale")
+            st.subheader("Explanation")
             st.write(y["rationale"])
-            st.metric("Total Phase 3 Latency", f"{y['elapsed_time']} s")
+            st.metric("Elapsed Time", f"{y['elapsed_time']} s")
 
         if y["compiles"]:
             v1, v2, v3 = st.columns(3)
@@ -226,9 +226,9 @@ if uploaded_file:
             with v3:
                 fp_kind = "ok" if y["fps"] == 0 else "err"
                 st.markdown(badge("ZERO FALSE POSITIVES" if y["fps"] == 0 else "FALSE POSITIVES DETECTED", fp_kind), unsafe_allow_html=True)
-                st.metric("3. Clean Corpus FPs", f"{y['fps']} / {len(y['legit_table'])}")
+                st.metric("3. Benign files False Positives", f"{y['fps']} / {len(y['legit_table'])}")
 
-            t1, t2, t3 = st.tabs(["Binary Byte Offsets", "Benign Corpus Audit", "Malware Lab Sweep"])
+            t1, t2, t3 = st.tabs(["Binary Byte Offsets", "Benign Files Audit", "Malware Samples"])
             with t1:
                 st.dataframe(pd.DataFrame(y["offsets"]), use_container_width=True, hide_index=True)
             with t2:
@@ -241,7 +241,7 @@ if uploaded_file:
     # --- HEAD-TO-HEAD BENCHMARK VIEW ---
     if "benchmark" in st.session_state:
         st.divider()
-        st.markdown('<div class="phase-header"><h3>Head-to-Head Local Benchmark: Untrained Base vs. QLoRA Fine-Tuned</h3></div>', unsafe_allow_html=True)
+        st.markdown('<div class="phase-header"><h3>Head-to-Head Benchmark: Untrained Base vs. Fine-Tuned</h3></div>', unsafe_allow_html=True)
         res_base, res_ft = st.session_state["benchmark"]
         bcol1, bcol2 = st.columns(2)
 
@@ -252,11 +252,11 @@ if uploaded_file:
             with col:
                 st.subheader(title)
                 if res["compiles"] and res["target_match"] and res["fps"] == 0:
-                    st.markdown(badge("PRODUCTION READY (0 FP)", "ok"), unsafe_allow_html=True)
+                    st.markdown(badge("CORRECT SYNTAX & BENIGN FILE VALIDATION", "ok"), unsafe_allow_html=True)
                 elif not res["compiles"]:
                     st.markdown(badge("SYNTAX / JSON FAILURE", "err"), unsafe_allow_html=True)
                 else:
-                    st.markdown(badge(f"FAILED AUDIT ({res['fps']} FPs)", "warn"), unsafe_allow_html=True)
+                    st.markdown(badge(f"FAILED AUDIT ({res['fps']} FALSE POSITIVES)", "warn"), unsafe_allow_html=True)
 
                 bm1, bm2, bm3 = st.columns(3)
                 bm1.metric("Compiles", "YES" if res["compiles"] else "NO")
