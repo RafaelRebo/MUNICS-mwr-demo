@@ -5,134 +5,156 @@ import time
 import yara
 from openai import OpenAI
 
-def limpiar_y_formatear_yara(regla_raw: str) -> str:
-    txt = regla_raw.replace('\\n', '\n').replace('\\t', '    ').replace('\\"', '"').strip()
-    
+YARA_SYSTEM_PROMPT = (
+    "You are an expert YARA v4 detection engineer. Given static PE artifacts and a threat profile, "
+    "generate a zero-false-positive YARA v4 rule. Respond ONLY with valid JSON: "
+    '{"rule_name": "...", "rationale": "...", "yara_rule": "..."}'
+)
+
+
+def sanitize_and_format_yara(raw_rule: str) -> str:
+    txt = raw_rule.replace("\\n", "\n").replace("\\t", "    ").replace('\\"', '"').strip()
+
     if txt.count("\n") < 4:
-        txt = re.sub(r'\s*\{\s*', ' {\n    ', txt, count=1)
-        txt = re.sub(r'\s*(meta|strings|condition)\s*:\s*', r'\n\n    \1:\n        ', txt)
-        txt = re.sub(r'\s+(\$[a-zA-Z0-9_]+\s*=)', r'\n        \1', txt)
+        txt = re.sub(r"\s*\{\s*", " {\n    ", txt, count=1)
+        txt = re.sub(r"\s*(meta|strings|condition)\s*:\s*", r"\n\n    \1:\n        ", txt)
+        txt = re.sub(r"\s+(\$[a-zA-Z0-9_]+\s*=)", r"\n        \1", txt)
         txt = re.sub(r'"\s+([a-zA-Z0-9_]+\s*=)', r'"\n        \1', txt)
-        txt = re.sub(r'\s*\}\s*$', '\n}', txt)
+        txt = re.sub(r"\s*\}\s*$", "\n}", txt)
 
-    def _escapar_barras_en_string(match):
-        contenido = match.group(1)
-        contenido_limpio = contenido.replace('\\\\', '\\').replace('\\', '\\\\')
-        return f'"{contenido_limpio}"'
+    def _escape_backslashes(match):
+        content = match.group(1)
+        clean_content = content.replace("\\\\", "\\").replace("\\", "\\\\")
+        return f'"{clean_content}"'
 
-    txt = re.sub(r'"([^"]*)"', _escapar_barras_en_string, txt)
-    txt = re.sub(r';\s*$', '', txt, flags=re.MULTILINE)
+    txt = re.sub(r'"([^"]*)"', _escape_backslashes, txt)
+    txt = re.sub(r";\s*$", "", txt, flags=re.MULTILINE)
+    txt = re.sub(r'^\s*[a-zA-Z0-9_]+\s*=\s*\[.*?\]\s*$', '', txt, flags=re.MULTILINE | re.DOTALL)
     return txt
 
-def generar_y_validar_yara(api_key: str, modelo: str, perfil: dict, datos_pe: dict, bytes_exe: bytes, dir_legitimos: str, dir_samples: str) -> dict:
+
+def generate_and_validate_yara(
+    provider: str,
+    api_key: str,
+    model: str,
+    profile: dict,
+    pe_data: dict,
+    exe_bytes: bytes,
+    legit_dir: str,
+    samples_dir: str
+) -> dict:
     t0 = time.time()
-    client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
-    prompt = """Eres un ingeniero de detección especialista en YARA.
-    Genera una regla YARA precisa basada en el perfil de amenaza y los indicadores encontrados.
-    Responde ÚNICAMENTE con un objeto JSON válido (sin texto extra fuera de las llaves):
-    {
-      "nombre_regla": "Nombre_Regla_Sin_Espacios",
-      "explicacion": "Por qué se eligieron estos indicadores para evitar falsos positivos.",
-      "regla_yara": "rule Nombre_Regla_Sin_Espacios { meta: ... strings: ... condition: uint16(0) == 0x5A4D and ... }"
-    }
-    Reglas:
-    1. Empieza siempre la condition con: uint16(0) == 0x5A4D
-    2. Usa indicadores únicos del malware (dominios, mutex, claves de registro, nombres de archivo o secciones UPX0/UPX1 si está empaquetado). Evita nombres genéricos de Windows."""
+    if provider == "Local (Ollama)":
+        client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
+    else:
+        client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
-    contexto = {
-        "perfil": perfil,
-        "strings": datos_pe["strings_interesantes"][:35],
-        "secciones": [s["Sección"] for s in datos_pe["secciones"]]
+    clean_profile = {
+    "malware_type": str(profile.get("malware_type", "Malware")),
+    "risk_level": str(profile.get("risk_level", "High"))
+}
+
+    context = {
+        "threat_profile": clean_profile,
+        "interesting_strings": [s[:60] for s in pe_data["interesting_strings"][:15]],
+        "sections": [s["Section"] for s in pe_data["sections"]]
     }
 
-    # SIN response_format para que Groq no lance Error 400 si un modelo pequeño falla
-    resp = client.chat.completions.create(
-        model=modelo,
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": json.dumps(contexto, indent=2)}
+    kwargs = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": YARA_SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(context)}
         ],
-        temperature=0.1
-    )
-    
+        "temperature": 0.1,
+        "max_tokens": 500
+    }
+    if provider == "Local (Ollama)":
+        kwargs["extra_body"] = {
+            "keep_alive": "2m",
+            "options": {"num_ctx": 2048}
+        }
+
+    resp = client.chat.completions.create(**kwargs)
     raw_content = resp.choices[0].message.content
+
     try:
-        match_json = re.search(r'\{.*\}', raw_content, re.DOTALL)
+        match_json = re.search(r"\{.*\}", raw_content, re.DOTALL)
         data = json.loads(match_json.group(0))
     except Exception:
         return {
-            "nombre_regla": "Error_Formato_LLM",
-            "explicacion": "El modelo ligero no respetó la estructura JSON al incluir código YARA.",
-            "regla_yara": raw_content,
-            "compila": False,
-            "error_sintaxis": "Fallo de estructuración JSON en salida del modelo",
-            "match_objetivo": False,
+            "rule_name": "LLM_Format_Error",
+            "rationale": "Model output did not conform to valid JSON structure.",
+            "yara_rule": raw_content,
+            "compiles": False,
+            "syntax_error": "Invalid JSON formatting in model response",
+            "target_match": False,
             "offsets": [],
             "fps": 0,
-            "tabla_legitimos": [],
-            "tabla_samples": [],
-            "tiempo": round(time.time() - t0, 2)
+            "legit_table": [],
+            "samples_table": [],
+            "elapsed_time": round(time.time() - t0, 2)
         }
 
-    regla_str = limpiar_y_formatear_yara(data.get("regla_yara", ""))
+    rule_name = data.get("rule_name") or data.get("nombre_regla") or "YARA_Rule"
+    rationale = data.get("rationale") or data.get("explicacion") or ""
+    raw_yara = data.get("yara_rule") or data.get("regla_yara") or ""
+    rule_str = sanitize_and_format_yara(raw_yara)
 
     res = {
-        "nombre_regla": data.get("nombre_regla", "Regla_YARA"),
-        "explicacion": data.get("explicacion", ""),
-        "regla_yara": regla_str,
-        "compila": False,
-        "error_sintaxis": "",
-        "match_objetivo": False,
+        "rule_name": rule_name,
+        "rationale": rationale,
+        "yara_rule": rule_str,
+        "compiles": False,
+        "syntax_error": "",
+        "target_match": False,
         "offsets": [],
         "fps": 0,
-        "tabla_legitimos": [],
-        "tabla_samples": [],
-        "tiempo": round(time.time() - t0, 2)
+        "legit_table": [],
+        "samples_table": [],
+        "elapsed_time": round(time.time() - t0, 2)
     }
 
     try:
-        regla = yara.compile(source=regla_str)
-        res["compila"] = True
+        compiled_rule = yara.compile(source=rule_str)
+        res["compiles"] = True
     except yara.SyntaxError as e:
-        res["error_sintaxis"] = str(e)
+        res["syntax_error"] = str(e)
         return res
 
-    # 1. Escaneo muestra objetivo y extracción de offsets exactos
-    hits = regla.match(data=bytes_exe)
+    hits = compiled_rule.match(data=exe_bytes)
     if hits:
-        res["match_objetivo"] = True
+        res["target_match"] = True
         for m in hits:
             for s in m.strings:
                 for inst in s.instances:
                     res["offsets"].append({
-                        "Variable YARA": s.identifier,
-                        "Offset en Binario": hex(inst.offset),
-                        "String Detectada": inst.matched_data.decode('utf-8', errors='replace')[:70]
+                        "YARA Identifier": s.identifier,
+                        "Binary Offset": hex(inst.offset),
+                        "Matched String": inst.matched_data.decode("utf-8", errors="replace")[:70]
                     })
 
-    # 2. Validación contra corpus legítimo (Falsos Positivos)
-    if os.path.exists(dir_legitimos):
-        for f in sorted(os.listdir(dir_legitimos)):
-            ruta = os.path.join(dir_legitimos, f)
-            if os.path.isfile(ruta):
-                alerta = bool(regla.match(ruta))
+    if os.path.exists(legit_dir):
+        for f in sorted(os.listdir(legit_dir)):
+            path = os.path.join(legit_dir, f)
+            if os.path.isfile(path):
+                alerta = bool(compiled_rule.match(path))
                 if alerta:
                     res["fps"] += 1
-                res["tabla_legitimos"].append({
-                    "Archivo Legítimo": f,
-                    "Resultado": "⚠️ FALSO POSITIVO" if alerta else "✅ Limpio"
+                res["legit_table"].append({
+                    "Benign Binary": f,
+                    "Status": "FALSE POSITIVE" if alerta else "CLEAN"
                 })
 
-    # 3. Barrido sobre el resto de muestras de laboratorio
-    if os.path.exists(dir_samples):
-        for f in sorted(os.listdir(dir_samples)):
-            ruta = os.path.join(dir_samples, f)
-            if os.path.isfile(ruta):
-                alerta = bool(regla.match(ruta))
-                res["tabla_samples"].append({
-                    "Muestra": f,
-                    "Resultado": "✅ DETECTADO" if alerta else "➖ Sin coincidencia"
+    if os.path.exists(samples_dir):
+        for f in sorted(os.listdir(samples_dir)):
+            path = os.path.join(samples_dir, f)
+            if os.path.isfile(path):
+                alerta = bool(compiled_rule.match(path))
+                res["samples_table"].append({
+                    "Lab Sample": f,
+                    "Status": "DETECTED" if alerta else "NO MATCH"
                 })
 
     return res

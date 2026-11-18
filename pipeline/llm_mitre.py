@@ -2,43 +2,61 @@ import json
 import time
 from openai import OpenAI
 
-def generar_perfil_mitre(api_key: str, modelo: str, datos_pe: dict) -> dict:
-    t0 = time.time()
-    client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
-    resumen_pe = {
-        "archivo": datos_pe["nombre"],
-        "compile_time": datos_pe["compile_time"],
-        "posible_packing": datos_pe["posible_packing"],
-        "motivos_packing": datos_pe["motivos_packing"],
-        "recurso_pe_incrustado": datos_pe["recurso_pe_oculto"],
-        "secciones": datos_pe["secciones"],
-        "imports_por_dll": datos_pe["imports_dll"],
-        "exports": datos_pe["exports"],
-        "strings_relevantes": datos_pe["strings_interesantes"][:40]
+def generate_mitre_profile(provider: str, api_key: str, model: str, pe_data: dict) -> dict:
+    t0 = time.time()
+
+    if provider == "Local (Ollama)":
+        client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
+    else:
+        client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+
+    compact_imports = {}
+    for dll, funcs in pe_data["imports_dll"].items():
+        clean = [f for f in funcs if not f.startswith("_")][:20]
+        if clean:
+            compact_imports[dll] = clean
+
+    pe_summary = {
+        "file": pe_data["file_name"],
+        "compile_time": pe_data["compile_time"],
+        "possible_packing": pe_data["possible_packing"],
+        "packing_reasons": pe_data["packing_reasons"],
+        "embedded_pe_resource": pe_data["embedded_pe"],
+        "sections": pe_data["sections"],
+        "imports_by_dll": compact_imports,
+        "exports": pe_data["exports"][:15],
+        "interesting_strings": pe_data["interesting_strings"][:30]
     }
 
-    prompt = """Eres un analista de malware. Analiza estos artefactos extraídos mediante análisis estático básico (PEview, Imports/Exports y Strings).
-    Responde EXCLUSIVAMENTE en JSON válido:
-    {
-      "tipo_malware": "Ej: Downloader / Dropper / Backdoor / Packed Binary",
-      "riesgo": "Alto / Medio / Bajo",
-      "diagnostico": "Explicación clara en 3-4 líneas de qué hace el binario basándote en sus imports, secciones y strings.",
-      "indicadores_host_red": ["Lista de IoCs encontrados: rutas de registro, nombres de archivo, mutex, dominios o IPs"],
-      "mitre_attack": [
-        {"Táctica": "Ej: Persistence", "ID": "T1547.001", "Técnica": "Registry Run Keys", "Evidencia": "String o API exacta"}
-      ]
-    }"""
+    system_prompt = """You are a senior malware analyst. Analyze these static PE artifacts and respond EXCLUSIVELY with valid JSON:
+{
+  "malware_type": "Downloader / Dropper / Backdoor / Packed Binary",
+  "risk_level": "High / Medium / Low",
+  "diagnosis": "3-4 line technical summary of what the binary does.",
+  "host_network_iocs": ["registry keys, file paths, mutexes, domains, or IPs"],
+  "mitre_attack": [
+    {"Tactic": "Persistence", "ID": "T1547.001", "Technique": "Registry Run Keys", "Evidence": "Exact string or API"}
+  ]
+}"""
 
-    resp = client.chat.completions.create(
-        model=modelo,
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": json.dumps(resumen_pe, indent=2)}
+    kwargs = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(pe_summary)}
         ],
-        temperature=0.1,
-        response_format={"type": "json_object"}
-    )
-    out = json.loads(resp.choices[0].message.content)
-    out["tiempo"] = round(time.time() - t0, 2)
+        "temperature": 0.1,
+        "max_tokens": 700
+    }
+    if provider == "Local (Ollama)":
+        kwargs["extra_body"] = {"keep_alive": -1}
+    else:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    resp = client.chat.completions.create(**kwargs)
+    raw = resp.choices[0].message.content
+    start, end = raw.find("{"), raw.rfind("}")
+    out = json.loads(raw[start:end + 1]) if start != -1 and end != -1 else json.loads(raw)
+    out["elapsed_time"] = round(time.time() - t0, 2)
     return out
