@@ -5,9 +5,9 @@ import yara
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv("../.env")
 API_KEY = os.getenv("GROQ_API_KEY", "")
-LEGIT_DIR = "legitimate_files"
+LEGIT_DIR = "../legitimate_files"
 client = OpenAI(api_key=API_KEY, base_url="https://api.groq.com/openai/v1")
 
 scenarios = [
