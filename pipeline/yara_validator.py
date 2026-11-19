@@ -27,7 +27,6 @@ def _expand_multiline(txt: str) -> str:
 def sanitize_and_format_yara(raw_rule: str, is_packed: bool = False) -> str:
     txt = raw_rule.replace("\\n", "\n").replace("\\t", "    ").replace('\\"', '"').strip()
 
-    # Strip markdown fences or text before 'import ' / 'rule '
     lines = txt.splitlines()
     cleaned_lines = []
     started = False
@@ -42,11 +41,9 @@ def sanitize_and_format_yara(raw_rule: str, is_packed: bool = False) -> str:
     txt = "\n".join(cleaned_lines).strip()
 
     if not txt:
-        # Fallback: format raw output cleanly in multiple lines so broken rules are still readable
         txt = re.sub(r"```[a-zA-Z]*\n?", "", raw_rule).replace("```", "").strip()
         return _expand_multiline(txt)
 
-    # Expand single-line rules while preserving top-level import statements
     txt = _expand_multiline(txt)
 
     def _escape_backslashes(match):
@@ -54,12 +51,10 @@ def sanitize_and_format_yara(raw_rule: str, is_packed: bool = False) -> str:
         clean_content = content.replace("\\\\", "\\").replace("\\", "\\\\")
         return f'"{clean_content}"'
 
-    # Escape backslashes inside string literals without breaking import "pe" / import "math"
     txt = re.sub(r'"([^"]*)"', _escape_backslashes, txt)
     txt = re.sub(r";\s*$", "", txt, flags=re.MULTILINE)
     txt = re.sub(r'^\s*[a-zA-Z0-9_]+\s*=\s*\[.*?\]\s*$', '', txt, flags=re.MULTILINE | re.DOTALL)
 
-    # Fix duplicate/wrong DLL attribution for CreateServiceA
     txt = re.sub(r'\s*pe\.imports\("KERNEL32\.DLL",\s*"CreateServiceA"\)\s*and\s*', '\n        ', txt, flags=re.IGNORECASE)
 
     if is_packed:
@@ -72,10 +67,8 @@ def sanitize_and_format_yara(raw_rule: str, is_packed: bool = False) -> str:
         txt = re.sub(r"\s*math\.entropy\([^)]+\)\s*>=\s*\d+(?:\.\d+)?\s*and\s*", "\n        ", txt)
         txt = re.sub(r"\s*and\s*math\.entropy\([^)]+\)\s*>=\s*\d+(?:\.\d+)?", "", txt)
 
-    # Make DLL/API matching case-insensitive in YARA PE module
     txt = re.sub(r'pe\.imports\("([^"]+)",\s*"([^"]+)"\)', r'pe.imports(/\1/i, /\2/i)', txt)
 
-    # Adaptive string match threshold
     string_defs = len(re.findall(r"^\s*\$s\d+\s*=", txt, flags=re.MULTILINE))
     if is_packed:
         txt = re.sub(r"\b[2-9]\s+of\s+\(\$s\*\)", "1 of ($s*)", txt)
@@ -147,7 +140,6 @@ def generate_and_validate_yara(
     try:
         resp = client.chat.completions.create(**kwargs)
     except Exception:
-        # Fallback without strict JSON mode if a cloud reasoning model fails JSON schema validation
         kwargs.pop("response_format", None)
         resp = client.chat.completions.create(**kwargs)
 

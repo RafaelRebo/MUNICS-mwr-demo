@@ -11,7 +11,7 @@ os.environ["OPENAI_BASE_URL"] = "https://api.groq.com/openai/v1"
 
 api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
-    raise RuntimeError("No se encontró GROQ_API_KEY en ../.env")
+    raise RuntimeError("No GROQ_API_KEY in ../.env")
 
 client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
@@ -52,7 +52,7 @@ def passes_audit(rule_text: str) -> bool:
 
 dataset = []
 for sc in SCENARIOS:
-    for batch in range(6):  # 10 escenarios x 6 lotes x 2 ejemplos = ~120 ejemplos
+    for batch in range(6):
         prompt = f"""Generate 2 distinct training pairs for malware scenario: '{sc}' (variant {batch+1}).
 Respond ONLY with raw JSON (no markdown fences) with a single key "examples" containing 2 objects:
 {{
@@ -86,11 +86,11 @@ Respond ONLY with raw JSON (no markdown fences) with a single key "examples" con
                         ]
                     })
         except Exception as e:
-            print(f"Aviso en lote {batch+1} de '{sc}': {e}")
+            print(f"Warning in batch {batch+1} of '{sc}': {e}")
             time.sleep(2)
-    print(f"Progreso: {len(dataset)} ejemplos válidos...")
+    print(f"Progress: {len(dataset)} valid examples...")
 
 with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     for row in dataset:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
-print(f"Dataset listo: {OUTPUT_FILE} ({len(dataset)} ejemplos)")
+print(f"Dataset ready: {OUTPUT_FILE} ({len(dataset)} examples)")

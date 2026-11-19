@@ -12,7 +12,6 @@ load_dotenv()
 
 st.set_page_config(page_title="AI Malware Analysis & YARA Pipeline", layout="wide")
 
-# --- CUSTOM CSS FOR CLEAN TECHNICAL BADGES & UI ---
 st.markdown("""
 <style>
 .badge {

@@ -29,7 +29,7 @@ def analyze_pe(file_bytes: bytes, file_name: str) -> dict:
     ts = pe.FILE_HEADER.TimeDateStamp
     compile_time = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # 2. PE Sections: Shannon Entropy & Raw vs Virtual Size
+    # 2. PE Sections: Entropy & Raw vs Virtual Size
     sections = []
     possible_packing = False
     packing_reasons = []
