@@ -6,7 +6,7 @@ import yara
 from openai import OpenAI
 
 YARA_SYSTEM_PROMPT = (
-    "You are a senior malware reverse engineer. Output ONLY valid JSON with keys "
+    "You are a senior malware reverse engineer. Output ONLY a valid JSON object with keys "
     "'rule_name', 'yara_rule', and 'rationale'. Write strict YARA v4 rules combining "
     "PE header checks (uint16(0) == 0x5A4D), 'import \"pe\"' (pe.imports), 'import \"math\"' "
     "(math.entropy when packed), and '2 of ($s*)' over unique strings (never DOS stub or generic DLL names)."
@@ -100,7 +100,7 @@ def generate_and_validate_yara(
     if provider == "Local (Ollama)":
         client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
     else:
-        client = OpenAI(api_key=api_key, base_url="[https://api.groq.com/openai/v1](https://api.groq.com/openai/v1)")
+        client = OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
     clean_profile = {
         "malware_type": str(profile.get("malware_type", "Malware")),
@@ -132,10 +132,10 @@ def generate_and_validate_yara(
         "model": model,
         "messages": [
             {"role": "system", "content": YARA_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(context)}
+            {"role": "user", "content": "Return valid JSON:\n" + json.dumps(context)}
         ],
         "temperature": 0.1,
-        "max_tokens": 600,
+        "max_tokens": 600 if provider == "Local (Ollama)" else 2048,
         "response_format": {"type": "json_object"}
     }
     if provider == "Local (Ollama)":
@@ -144,7 +144,13 @@ def generate_and_validate_yara(
             "options": {"num_ctx": 2048}
         }
 
-    resp = client.chat.completions.create(**kwargs)
+    try:
+        resp = client.chat.completions.create(**kwargs)
+    except Exception:
+        # Fallback without strict JSON mode if a cloud reasoning model fails JSON schema validation
+        kwargs.pop("response_format", None)
+        resp = client.chat.completions.create(**kwargs)
+
     raw_content = resp.choices[0].message.content
 
     try:
