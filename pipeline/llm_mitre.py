@@ -36,7 +36,7 @@ def generate_mitre_profile(provider: str, api_key: str, model: str, pe_data: dic
   "diagnosis": "3-4 line technical summary of what the binary does.",
   "host_network_iocs": ["registry keys, file paths, mutexes, domains, or IPs"],
   "mitre_attack": [
-    {"Tactic": "Persistence", "ID": "T1547.001", "Technique": "Registry Run Keys", "Evidence": "Exact string or API"}
+    {"Tactic": "Persistence", "Tactic ID": "TA0003", "Technique": "Windows Service", "Technique ID": "T1543.003", "Evidence": "CreateServiceA"}
   ]
 }"""
 

@@ -57,13 +57,13 @@ with st.sidebar:
 
     api_key = ""
     if provider == "Local (Ollama)":
-        local_models = ["yara-expert-3b", "qwen2.5-coder:3b"]
+        local_models = ["yara-expert-3b-v2", "qwen2.5-coder:3b"]
         try:
             c = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
             installed = [m.id for m in c.models.list().data]
             if installed:
                 # Prioritize yara-expert-3b at the top of the dropdown
-                local_models = sorted(installed, key=lambda x: (0 if "yara-expert" in x else 1, x))
+                local_models = sorted(installed, key=lambda x: (0 if "v2" in x else (1 if "yara-expert" in x else 2), x))
             st.markdown(badge("OLLAMA ONLINE (LOCAL GPU)", "ok"), unsafe_allow_html=True)
         except Exception:
             st.markdown(badge("OLLAMA SERVER OFFLINE", "err"), unsafe_allow_html=True)
@@ -199,7 +199,7 @@ if uploaded_file:
                     "Local (Ollama)", "", "qwen2.5-coder:3b", p, pe_data, exe_bytes, legit_dir, samples_dir
                 )
                 res_ft = generate_and_validate_yara(
-                    "Local (Ollama)", "", "yara-expert-3b", p, pe_data, exe_bytes, legit_dir, samples_dir
+                    "Local (Ollama)", "", "yara-expert-3b-v2", p, pe_data, exe_bytes, legit_dir, samples_dir
                 )
                 st.session_state["benchmark"] = (res_base, res_ft)
 
@@ -247,7 +247,7 @@ if uploaded_file:
 
         for col, title, res in [
             (bcol1, "Untrained Base (qwen2.5-coder:3b)", res_base),
-            (bcol2, "Fine-Tuned Model (yara-expert-3b)", res_ft)
+            (bcol2, "Fine-Tuned Model (yara-expert-3b-v2)", res_ft)
         ]:
             with col:
                 st.subheader(title)
